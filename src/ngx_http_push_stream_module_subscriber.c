@@ -516,16 +516,18 @@ static void
 ngx_http_push_stream_send_old_messages(ngx_http_request_t *r, ngx_http_push_stream_channel_t *channel, ngx_uint_t backtrack, time_t if_modified_since, ngx_int_t tag, time_t greater_message_time, ngx_int_t greater_message_tag, ngx_str_t *last_event_id)
 {
     ngx_http_push_stream_module_ctx_t     *ctx = ngx_http_get_module_ctx(r, ngx_http_push_stream_module);
+    ngx_http_push_stream_main_conf_t      *mcf = ngx_http_get_module_main_conf(r, ngx_http_push_stream_module);
     ngx_http_push_stream_msg_t            *message;
-    ngx_queue_t                           *q;
+    ngx_queue_t                           *q, *next;
 
     if (ngx_http_push_stream_has_old_messages_to_send(channel, backtrack, if_modified_since, tag, greater_message_time, greater_message_tag, last_event_id)) {
         if (backtrack > 0) {
             ngx_uint_t qtd = (backtrack > channel->stored_messages) ? channel->stored_messages : backtrack;
-            ngx_uint_t start = channel->stored_messages - qtd;
+            ngx_uint_t start = 0;//channel->stored_messages - qtd; //get first one
             ngx_shmtx_lock(channel->mutex);
             // positioning at first message, and send the others
-            for (q = ngx_queue_head(&channel->message_queue); (qtd > 0) && q != ngx_queue_sentinel(&channel->message_queue); q = ngx_queue_next(q)) {
+            for (q = ngx_queue_head(&channel->message_queue); (qtd > 0) && q != ngx_queue_sentinel(&channel->message_queue); q = next) {
+                next = ngx_queue_next(q);
                 message = ngx_queue_data(q, ngx_http_push_stream_msg_t, queue);
                 if (message->deleted) {
                     break;
@@ -533,7 +535,11 @@ ngx_http_push_stream_send_old_messages(ngx_http_request_t *r, ngx_http_push_stre
 
                 if (start == 0) {
                     qtd--;
-                    ngx_http_push_stream_send_response_message(r, channel, message, 0, ctx->message_sent);
+                    if (NGX_OK == ngx_http_push_stream_send_response_message(r, channel, message, 0, ctx->message_sent)) {
+                        NGX_HTTP_PUSH_STREAM_DECREMENT_COUNTER(channel->stored_messages);
+                        ngx_queue_remove(&message->queue);
+                        ngx_http_push_stream_throw_the_message_away(message, mcf->shm_data);
+                    }
                 } else {
                     start--;
                 }
@@ -561,7 +567,11 @@ ngx_http_push_stream_send_old_messages(ngx_http_request_t *r, ngx_http_push_stre
                 }
 
                 if (found && (((greater_message_time == 0) && (greater_message_tag == -1)) || (greater_message_time > message->time) || ((greater_message_time == message->time) && (greater_message_tag >= message->tag)))) {
-                    ngx_http_push_stream_send_response_message(r, channel, message, 0, ctx->message_sent);
+                    if (NGX_OK == ngx_http_push_stream_send_response_message(r, channel, message, 0, ctx->message_sent)) {
+                        NGX_HTTP_PUSH_STREAM_DECREMENT_COUNTER(channel->stored_messages);
+                        ngx_queue_remove(&message->queue);
+                        ngx_http_push_stream_throw_the_message_away(message, mcf->shm_data);
+                    }
                 }
             }
             ngx_shmtx_unlock(channel->mutex);

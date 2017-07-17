@@ -504,6 +504,7 @@ ngx_http_push_stream_respond_to_subscribers(ngx_http_push_stream_channel_t *chan
 
         // now let's respond to some requests!
         for (q = ngx_queue_head(subscriptions); q != ngx_queue_sentinel(subscriptions);) {
+            ngx_int_t      ret = NGX_ERROR;
             ngx_http_push_stream_subscription_t *subscription = ngx_queue_data(q, ngx_http_push_stream_subscription_t, channel_worker_queue);
             q = ngx_queue_next(q);
             ngx_http_push_stream_subscriber_t *subscriber = subscription->subscriber;
@@ -512,7 +513,7 @@ ngx_http_push_stream_respond_to_subscribers(ngx_http_push_stream_channel_t *chan
                 ngx_http_send_header(subscriber->request);
 
                 ngx_http_push_stream_send_response_content_header(subscriber->request, ngx_http_get_module_loc_conf(subscriber->request, ngx_http_push_stream_module));
-                ngx_http_push_stream_send_response_message(subscriber->request, channel, msg, 1, 0);
+                ret = ngx_http_push_stream_send_response_message(subscriber->request, channel, msg, 1, 0);
                 ngx_http_push_stream_send_response_finalize(subscriber->request);
             } else {
                 if (ngx_http_push_stream_send_response_message(subscriber->request, channel, msg, 0, 0) != NGX_OK) {
@@ -521,8 +522,15 @@ ngx_http_push_stream_respond_to_subscribers(ngx_http_push_stream_channel_t *chan
                     ngx_http_push_stream_module_ctx_t     *ctx = ngx_http_get_module_ctx(subscriber->request, ngx_http_push_stream_module);
                     ngx_http_push_stream_loc_conf_t       *pslcf = ngx_http_get_module_loc_conf(subscriber->request, ngx_http_push_stream_module);
                     ngx_http_push_stream_timer_reset(pslcf->ping_message_interval, ctx->ping_timer);
+                    ret = NGX_OK;
                 }
             }
+            //remove by id
+            if (ret == NGX_OK) {
+                  ngx_http_push_stream_main_conf_t      *mcf = ngx_http_get_module_main_conf(subscriber->request, ngx_http_push_stream_module);
+                  ngx_http_push_stream_queue_remove_by_id(mcf->shm_data, channel,msg->id);
+            }
+            
         }
     }
 

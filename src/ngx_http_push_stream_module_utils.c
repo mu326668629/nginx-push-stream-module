@@ -35,6 +35,28 @@ void                   ngx_http_push_stream_free_memory_of_expired_messages_and_
 static ngx_inline void ngx_http_push_stream_cleanup_shutting_down_worker_data(ngx_http_push_stream_shm_data_t *data);
 static void            ngx_http_push_stream_flush_pending_output(ngx_http_request_t *r);
 
+ngx_uint_t
+    ngx_http_push_stream_queue_remove_by_id(ngx_http_push_stream_shm_data_t *data, ngx_http_push_stream_channel_t *channel, ngx_int_t id)
+{
+    ngx_queue_t                            *q;
+    ngx_http_push_stream_msg_t             *msg;
+    ngx_uint_t deleted = 0;
+
+    ngx_shmtx_lock(channel->mutex);
+    for (q = ngx_queue_head(&channel->message_queue); q != ngx_queue_sentinel(&channel->message_queue); q = ngx_queue_next(q)) {
+        msg = ngx_queue_data(q, ngx_http_push_stream_msg_t, queue);
+
+        if (msg->id == id) {
+            NGX_HTTP_PUSH_STREAM_DECREMENT_COUNTER(channel->stored_messages);
+            ngx_queue_remove(&msg->queue);
+            ngx_http_push_stream_throw_the_message_away(msg, data);
+            deleted = 1;
+            break;
+        }
+    }
+    ngx_shmtx_unlock(channel->mutex);
+    return deleted;
+}
 
 ngx_uint_t
 ngx_http_push_stream_ensure_qtd_of_messages(ngx_http_push_stream_shm_data_t *data, ngx_http_push_stream_channel_t *channel, ngx_uint_t max_messages, ngx_flag_t expired)
@@ -617,7 +639,6 @@ ngx_http_push_stream_send_response_message(ngx_http_request_t *r, ngx_http_push_
             }
         }
     }
-
     return rc;
 }
 
